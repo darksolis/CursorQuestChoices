@@ -1,18 +1,18 @@
-Cursor Quest Choices v2.3.5
-By Darksolis
+CoA Inspect Tree
+Version 0.20
 
-Places NPC quest and gossip choices beside the cursor, automates eligible quest acceptance and turn-ins, provides cursor-side reward choices, and positions the native merchant window beside the cursor.
+Displays a player's Conquest of Azeroth Character Advancement tree beside the Inspect window. Learned talents, ranks, class nodes, current specialization, alternate inspected specs, and optional side-by-side comparison with your own build are shown in a compact visual tree.
 
-Key commands:
-/cqc options
-/cqc on
-/cqc off
-/cqc mode manual
-/cqc mode value
-/cqc mode stats
+Controls
+- Inspect a player to open the tree automatically.
+- Click a numbered specialization button to inspect another unlocked build.
+- Click Compare to place your current build beside the inspected build.
+- Use the mouse wheel when the tree is taller than the available screen space.
+- Use the minus, plus, and Reset buttons to control panel scale.
+- /cit show
+- /cit hide
+- /cit reset
 
-Hold Shift while interacting with an NPC to temporarily pause automation.
-
-Install:
-Delete the old Interface\\AddOns\\CursorQuestChoices folder, then copy this CursorQuestChoices folder into Interface\\AddOns.
-Do not install the old standalone AutoQuestMaster335 addon beside it.
+Credits
+Original addon by Sonny.
+UI refresh and usability pass by Darksolis.

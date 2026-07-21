@@ -1,0 +1,16 @@
+## Interface: 30300
+## Title: CoA Inspect Tree
+## Notes: Shows the CoA talent tree when inspecting a player
+## Author: Sonny; UI refresh by Darksolis
+## Version: 0.20
+## SavedVariables: CoAInspectTreeDB
+
+Core\Log.lua
+Core\Init.lua
+Data\CAReader.lua
+Data\TreeModel.lua
+Core\Debug.lua
+UI\NodeButton.lua
+UI\EdgeLines.lua
+UI\TreePanel.lua
+UI\InspectHook.lua
