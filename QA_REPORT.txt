@@ -1,0 +1,42 @@
+Cursor Quest Choices v2.3.7 - Regression QA
+
+Primary fix
+- Replaced Hero's Call Board detection based on IsShown() with effective visibility checks.
+- A child frame can report IsShown() while its parent is hidden; that stale state was blocking every later normal NPC quest.
+- Board blocking is now stateless and clears immediately when the board is not truly visible.
+
+Normal quest path verified
+- GOSSIP_SHOW reaches SelectNextGossipAutoAction when the board is not visible.
+- QUEST_GREETING reaches SelectNextGreetingAutoAction when the board is not visible.
+- QUEST_DETAIL reaches AcceptQuest without requiring UnitExists("npc") or a specific panel global.
+- QUEST_PROGRESS, QUEST_COMPLETE, QUEST_ACCEPT_CONFIRM, and QUEST_FINISHED are not held by stale board state.
+- Multi-quest continuation remains bounded and retains duplicate-action protection.
+
+Other regression checks
+- Shift pause remains independent.
+- Manual reward picker remains available when automation is paused.
+- Native merchant frame still captures one opening anchor and defaults left of the cursor.
+- Merchant purchases and MERCHANT_UPDATE reuse the original anchor.
+- Cursor interaction panel remains hidden while the actual Hero's Call Board is visibly open.
+- Legacy AutoQuestMaster neutralization retained.
+
+Validation
+- Lua parsed successfully with luaparser.
+- Archive contains one executable Lua file.
+- ZIP integrity tested successfully.
+
+v2.3.7 First-Open Gossip Data QA
+- Added bounded delayed refreshes for private-server gossip data that initially returns texture markup/placeholders.
+- Raw |T...|t / |A...|a markup is stripped from visible labels.
+- Inline gossip icons are reused as row icons when available.
+- Malformed/empty first-frame options show a temporary loading label instead of raw texture paths.
+- Refresh preserves the original cursor anchor and stops after valid data, context closure, 1 second, or 6 attempts.
+- Refresh is cancelled on gossip close, quest transitions, merchant open, target changes, and quest finish.
+
+
+v2.3.7 AdiBags Stack-Overflow Hotfix
+- Removed global GetRegions() calls from the Hero's Call Board frame scan.
+- Global frame enumeration now checks frame names and effective visibility only.
+- Region/title inspection is restricted to known Call Board frame candidates and wrapped in pcall.
+- Prevents AdiBags item buttons from being inspected by Cursor Quest Choices.
+- First-click gossip refresh remains unchanged.

@@ -3,7 +3,7 @@
 -- By Darksolis
 
 local ADDON_NAME = ...
-local VERSION = "2.3.5"
+local VERSION = "2.3.7"
 local CQC = CreateFrame("Frame", "CursorQuestChoicesController")
 local boardSessionActive = false
 local boardLastSeen = 0
@@ -354,33 +354,52 @@ local function IsExcludedTitle(text)
     return normalized == "hero s call board" or normalized == "heros call board"
 end
 
-local function FrameContainsExcludedTitle(frame)
+local function FrameNameLooksExcluded(frame)
+    if not frame or not frame.GetName then return false end
+    local ok, name = pcall(frame.GetName, frame)
+    if not ok or type(name) ~= "string" then return false end
+    local lower = name:lower()
+    return lower:find("heroscallboard", 1, true)
+        or lower:find("herocallboard", 1, true)
+        or lower:find("callboard", 1, true)
+end
+
+local function FrameIsEffectivelyVisible(frame)
     if not frame then return false end
-    -- IsShown() only reports the frame's own flag; it may still return true
-    -- while a hidden parent makes the frame completely invisible. Use the
-    -- effective visibility state so a closed Call Board cannot poison later
-    -- normal NPC interactions.
     if frame.IsVisible then
-        if not frame:IsVisible() then return false end
-    elseif not frame.IsShown or not frame:IsShown() then
+        local ok, visible = pcall(frame.IsVisible, frame)
+        if not ok or not visible then return false end
+    elseif frame.IsShown then
+        local ok, shown = pcall(frame.IsShown, frame)
+        if not ok or not shown then return false end
+    else
         return false
     end
-    if frame.GetEffectiveAlpha and frame:GetEffectiveAlpha() <= 0.01 then return false end
-    if frame.GetName then
-        local name = frame:GetName()
-        if type(name) == "string" then
-            local lower = name:lower()
-            if lower:find("heroscallboard", 1, true) or lower:find("herocallboard", 1, true) or lower:find("callboard", 1, true) then
-                return true
-            end
-        end
+    if frame.GetEffectiveAlpha then
+        local ok, alpha = pcall(frame.GetEffectiveAlpha, frame)
+        if ok and type(alpha) == "number" and alpha <= 0.01 then return false end
     end
-    if frame.GetRegions then
-        local regions = { frame:GetRegions() }
-        for _,region in ipairs(regions) do
-            if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.GetText then
-                local ok, text = pcall(region.GetText, region)
-                if ok and IsExcludedTitle(text) then return true end
+    return true
+end
+
+local function FrameContainsExcludedTitle(frame, allowRegionInspection)
+    if not FrameIsEffectivelyVisible(frame) then return false end
+    if FrameNameLooksExcluded(frame) then return true end
+
+    -- Region inspection is intentionally restricted to a tiny set of known
+    -- Call Board candidates. Scanning GetRegions() on every UI frame can recurse
+    -- through custom bag buttons (notably AdiBags) and cause a stack overflow.
+    if allowRegionInspection and frame.GetRegions then
+        local ok, regions = pcall(function() return { frame:GetRegions() } end)
+        if ok and type(regions) == "table" then
+            for _,region in ipairs(regions) do
+                if region and region.GetObjectType and region.GetText then
+                    local typeOK, objectType = pcall(region.GetObjectType, region)
+                    if typeOK and objectType == "FontString" then
+                        local textOK, text = pcall(region.GetText, region)
+                        if textOK and IsExcludedTitle(text) then return true end
+                    end
+                end
             end
         end
     end
@@ -408,16 +427,16 @@ local function FindExcludedFrame()
         _G.HeroCallBoard, _G.CallBoardFrame, _G.CallboardFrame,
     }
     for _,frame in ipairs(likely) do
-        if FrameContainsExcludedTitle(frame) then return frame end
+        if FrameContainsExcludedTitle(frame, true) then return frame end
     end
 
-    -- Search all visible frames. The board can be created late and may sit
-    -- beyond the first few thousand frames on addon-heavy clients.
+    -- Search by frame name only. Never call GetRegions() across the global UI
+    -- tree: custom inventory frames can implement recursive region access.
     if EnumerateFrames then
         local frame = EnumerateFrames()
         local safety = 0
         while frame and safety < 10000 do
-            if FrameContainsExcludedTitle(frame) then return frame end
+            if FrameIsEffectivelyVisible(frame) and FrameNameLooksExcluded(frame) then return frame end
             frame = EnumerateFrames(frame)
             safety = safety + 1
         end
@@ -748,9 +767,57 @@ HeroCallBoardVisualOpen = function()
 end
 
 -- Cursor NPC choices -------------------------------------------------------
-local function BuildGossipChoices()
-    if HeroCallBoardVisualOpen() then panel:Hide(); return end
-    if not CursorQuestChoicesDB.enabled then return end
+-- Some private-server NPC menus publish placeholder texture markup on the
+-- first GOSSIP_SHOW, then populate the real option labels a frame or two later.
+-- Keep a short, bounded refresh window so the player never has to click away
+-- and reopen the NPC to get readable choices.
+local gossipRefresh = { active=false, delay=0, elapsed=0, attempts=0 }
+
+local function CancelGossipRefresh()
+    gossipRefresh.active=false
+    gossipRefresh.delay=0
+    gossipRefresh.elapsed=0
+    gossipRefresh.attempts=0
+end
+
+local function ScheduleGossipRefresh(delay)
+    gossipRefresh.active=true
+    gossipRefresh.delay=delay or 0.08
+    gossipRefresh.elapsed=0
+    gossipRefresh.attempts=0
+end
+
+local function CleanGossipOptionText(value)
+    local text=tostring(value or "")
+    text=text:gsub("|T.-|t", "")
+    text=text:gsub("|A.-|a", "")
+    text=SafeText(text)
+    text=text:gsub("^%s+", ""):gsub("%s+$", "")
+    return text
+end
+
+local function GossipTextNeedsRefresh(rawText, cleanText)
+    if cleanText=="" then return true end
+    local lower=cleanText:lower()
+    if lower:find("interface\\icons\\",1,true) or lower:find("interface/icons/",1,true) then return true end
+    return false
+end
+
+local function GossipInlineIcon(rawText)
+    local raw=tostring(rawText or "")
+    return raw:match("|T([^:|]+)") or raw:match("|A([^:|]+)")
+end
+
+local function GossipContextAvailable()
+    local options=GetNumGossipOptions and GetNumGossipOptions() or 0
+    local available=GetNumGossipAvailableQuests and GetNumGossipAvailableQuests() or 0
+    local active=GetNumGossipActiveQuests and GetNumGossipActiveQuests() or 0
+    return (options+available+active)>0
+end
+
+local function BuildGossipChoices(keepPosition)
+    if HeroCallBoardVisualOpen() then panel:Hide(); return false end
+    if not CursorQuestChoicesDB.enabled then return false end
     ResetEntries(); local npc=UnitName("npc") or "NPC"
     if CursorQuestChoicesDB.showActive and GetGossipActiveQuests then
         local data={GetGossipActiveQuests()}; local count=GetNumGossipActiveQuests and GetNumGossipActiveQuests() or 0; local stride=count>0 and math.floor(#data/count) or 0
@@ -760,9 +827,24 @@ local function BuildGossipChoices()
         local data={GetGossipAvailableQuests()}; local count=GetNumGossipAvailableQuests and GetNumGossipAvailableQuests() or 0; local stride=count>0 and math.floor(#data/count) or 0
         if stride>=3 then for i=1,count do local index=i; local o=(index-1)*stride; local title=FindString(data,o+1,o+stride); local lvl=tonumber(data[o+2]); local trivial=FindBoolean(data,o+1,o+stride,o+3); if title then AddEntry{text=(lvl and lvl>0 and "["..lvl.."] " or "")..title,subtext=trivial and "Low-level available quest" or "Available quest",icon="Interface\\GossipFrame\\AvailableQuestIcon",color=trivial and {.62,.64,.68} or {1,.91,.3},onClick=function() SelectGossipAvailableQuest(index) end} end end end
     end
-    if CursorQuestChoicesDB.showGossip and GetGossipOptions then local data={GetGossipOptions()}; for i=1,#data,2 do local text=data[i]; local kind=tostring(data[i+1] or "gossip"):lower(); local index=math.floor((i-1)/2)+1; if text then AddEntry{text=text,subtext="NPC interaction: "..kind,icon=gossipIcons[kind] or gossipIcons.gossip,color={.8,.9,1},onClick=function() SelectGossipOption(index) end} end end end
-    ShowPanel(npc,"gossip","Interface\\GossipFrame\\GossipGossipIcon")
+    local needsRefresh=false
+    if CursorQuestChoicesDB.showGossip and GetGossipOptions then
+        local data={GetGossipOptions()}
+        for i=1,#data,2 do
+            local rawText=data[i]
+            local text=CleanGossipOptionText(rawText)
+            local kind=tostring(data[i+1] or "gossip"):lower()
+            local index=math.floor((i-1)/2)+1
+            local malformed=GossipTextNeedsRefresh(rawText,text)
+            local inlineIcon=GossipInlineIcon(rawText)
+            if malformed then needsRefresh=true end
+            if text=="" or malformed then text="Loading interaction..." end
+            AddEntry{text=text,subtext=malformed and "Loading NPC interaction" or "NPC interaction: "..kind,icon=inlineIcon or gossipIcons[kind] or gossipIcons.gossip,color={.8,.9,1},onClick=function() SelectGossipOption(index) end}
+        end
+    end
+    ShowPanel(npc,"gossip","Interface\\GossipFrame\\GossipGossipIcon",keepPosition)
     if CursorQuestChoicesDB.hideBlizzardGossip and GossipFrame and GossipFrame:IsShown() then GossipFrame:Hide() end
+    return needsRefresh
 end
 
 local function BuildGreetingChoices()
@@ -1088,6 +1170,23 @@ CQC:SetScript("OnUpdate",function(_,elapsed)
         if _G.AQM_Frame or type(AQMDB)=="table" then NeutralizeLegacyAutoQuest("periodic runtime verification") end
     end
     exclusionScanDelay=math.max(0,(exclusionScanDelay or 0)-elapsed)
+    if gossipRefresh.active then
+        gossipRefresh.elapsed=gossipRefresh.elapsed+elapsed
+        gossipRefresh.delay=gossipRefresh.delay-elapsed
+        if gossipRefresh.delay<=0 then
+            gossipRefresh.attempts=gossipRefresh.attempts+1
+            if not GossipContextAvailable() then
+                CancelGossipRefresh()
+            else
+                local stillWaiting=BuildGossipChoices(true)
+                if not stillWaiting or gossipRefresh.elapsed>=1.0 or gossipRefresh.attempts>=6 then
+                    CancelGossipRefresh()
+                else
+                    gossipRefresh.delay=0.12
+                end
+            end
+        end
+    end
     if autoFlow.lock>0 then autoFlow.lock=math.max(0,autoFlow.lock-elapsed) end
     if autoFlow.pending then
         autoFlow.elapsed=autoFlow.elapsed+elapsed
@@ -1109,6 +1208,9 @@ CQC:SetScript("OnUpdate",function(_,elapsed)
     if pendingReward then pendingReward.elapsed=pendingReward.elapsed+elapsed; pendingReward.retry=pendingReward.retry-elapsed; if pendingReward.retry<=0 then pendingReward.retry=.15; if ChooseBestReward() then pendingReward=nil elseif pendingReward.elapsed>=1.5 then Debug("Reward cache timeout; showing picker"); pendingReward=nil; BuildRewardPanel(true) end end end
 end)
 CQC:SetScript("OnEvent",function(self,event,arg1)
+    if event=="GOSSIP_CLOSED" or event=="QUEST_DETAIL" or event=="QUEST_PROGRESS" or event=="QUEST_COMPLETE" or event=="QUEST_FINISHED" or event=="PLAYER_TARGET_CHANGED" then
+        CancelGossipRefresh()
+    end
     if event=="ADDON_LOADED" then
         if arg1==ADDON_NAME then
             CursorQuestChoicesDB=CopyDefaults(defaults,CursorQuestChoicesDB or {})
@@ -1146,8 +1248,10 @@ CQC:SetScript("OnEvent",function(self,event,arg1)
         if autoFlow.lock<=0 and not Paused() and SelectNextGossipAutoAction() then panel:Hide(); return end
         -- Visual gossip data is valid even when this private server does not
         -- preserve the npc unit token. Board interactions were excluded above.
-        BuildGossipChoices()
+        local needsRefresh=BuildGossipChoices(false)
+        if needsRefresh then ScheduleGossipRefresh(0.06) else CancelGossipRefresh() end
     elseif event=="MERCHANT_SHOW" then
+        CancelGossipRefresh()
         InstallMerchantFrameHook()
         BeginMerchantReposition()
         if CursorQuestChoicesDB.showMerchantInventory then BuildMerchantPanel(false)
