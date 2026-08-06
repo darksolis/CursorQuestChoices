@@ -40,3 +40,16 @@ v2.3.7 AdiBags Stack-Overflow Hotfix
 - Region/title inspection is restricted to known Call Board frame candidates and wrapped in pcall.
 - Prevents AdiBags item buttons from being inspected by Cursor Quest Choices.
 - First-click gossip refresh remains unchanged.
+
+
+v2.4.0 Call Board isolation QA
+- Call Board toggle is evaluated only when no normal named NPC is active or the NPC is Hero's Call Board.
+- Merchant, trainer, banker, taxi, and normal quest-giver gossip bypass Call Board suppression.
+- Normal NPC quest selection and AcceptQuest wrappers cannot be blocked by stale board frames.
+- Call Board ON allows board behavior; OFF suppresses only board behavior.
+
+
+v2.4.2 intermittent auto-accept QA:
+- Fixed GOSSIP_SHOW/QUEST_GREETING events arriving during action lock being dropped.
+- Added bounded delayed retry while private-server quest records settle.
+- Global Call Board API guard now blocks only an interaction explicitly classified as the board; it no longer live-rescans stale UI frames during normal quest calls.

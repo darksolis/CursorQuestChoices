@@ -3,12 +3,13 @@
 -- By Darksolis
 
 local ADDON_NAME = ...
-local VERSION = "2.3.8"
+local VERSION = "2.4.2"
 local CQC = CreateFrame("Frame", "CursorQuestChoicesController")
 local boardSessionActive = false
 local boardLastSeen = 0
 local boardReleaseArmed = false
 local boardNPCGUID = nil
+local interactionIsCallBoard = nil
 
 local defaults = {
     enabled = true,
@@ -24,7 +25,7 @@ local defaults = {
     moveMerchantFrame = true,
     showMerchantInventory = false,
     hideBlizzardMerchant = false,
-    disableOnCallBoard = true,
+    callBoardEnabled = false, -- false = addon remains inactive on Hero's Call Board
 
     autoQuestEnabled = true,
     skipTrivial = true,
@@ -262,7 +263,7 @@ local function InstallQuestAPIGuard()
     if type(_G.SelectGossipAvailableQuest) == "function" then
         originalSelectGossipAvailableQuest = _G.SelectGossipAvailableQuest
         _G.SelectGossipAvailableQuest = function(index, ...)
-            if BoardAutomationBlocked and BoardAutomationBlocked(true) then
+            if interactionIsCallBoard == true and CursorQuestChoicesDB and not CursorQuestChoicesDB.callBoardEnabled then
                 Debug("BOARD GUARD blocked SelectGossipAvailableQuest", index)
                 if autoFlow then autoFlow.pending = false end
                 pendingReward = nil
@@ -281,7 +282,7 @@ local function InstallQuestAPIGuard()
     if type(_G.SelectAvailableQuest) == "function" then
         originalSelectAvailableQuest = _G.SelectAvailableQuest
         _G.SelectAvailableQuest = function(index, ...)
-            if BoardAutomationBlocked and BoardAutomationBlocked(true) then
+            if interactionIsCallBoard == true and CursorQuestChoicesDB and not CursorQuestChoicesDB.callBoardEnabled then
                 Debug("BOARD GUARD blocked SelectAvailableQuest", index)
                 if autoFlow then autoFlow.pending = false end
                 pendingReward = nil
@@ -301,7 +302,7 @@ local function InstallQuestAPIGuard()
         originalAcceptQuest = _G.AcceptQuest
         _G.AcceptQuest = function(...)
             local title = GetTitleText and GetTitleText()
-            if BoardAutomationBlocked and BoardAutomationBlocked(true) then
+            if interactionIsCallBoard == true and CursorQuestChoicesDB and not CursorQuestChoicesDB.callBoardEnabled then
                 Debug("BOARD GUARD blocked AcceptQuest", title or "?")
                 SuppressBlockedQuestUI("board-wide AcceptQuest guard")
                 return
@@ -486,29 +487,31 @@ end
 -- deliberately based on the visible board frame, not rotating quest titles.
 -- Cached root/frame checks handle tab rebuilds; forced scans catch late-loaded
 -- board frames before any selection API is allowed to run.
-BoardAutomationBlocked = function(forceScan)
-    if not CursorQuestChoicesDB or not CursorQuestChoicesDB.disableOnCallBoard then
-        boardSessionActive = false
-        boardReleaseArmed = false
-        boardNPCGUID = nil
-        excludedFrame = nil
-        excludedRoot = nil
-        return false
+local function CaptureInteractionSource(forceScan)
+    local npcName = UnitName and UnitName("npc") or nil
+    if type(npcName) == "string" and npcName ~= "" then
+        interactionIsCallBoard = IsExcludedTitle(npcName) and true or false
+        return interactionIsCallBoard
     end
-    -- Never retain a board session after the board is no longer truly visible.
-    -- This is intentionally stateless: each quest action checks the live UI.
-    local visible = VisibleBoardDetected(forceScan and true or false)
-    if visible then
+    interactionIsCallBoard = VisibleBoardDetected(forceScan and true or false) and true or false
+    return interactionIsCallBoard
+end
+
+BoardAutomationBlocked = function(forceScan)
+    if CursorQuestChoicesDB and CursorQuestChoicesDB.callBoardEnabled then return false end
+
+    -- Never reclassify an already-established normal NPC interaction merely
+    -- because CoA drops the npc unit token on QUEST_DETAIL/PROGRESS/COMPLETE.
+    if interactionIsCallBoard == false then return false end
+
+    local isBoard = interactionIsCallBoard
+    if isBoard == nil then isBoard = CaptureInteractionSource(forceScan) end
+    if isBoard then
         if autoFlow then autoFlow.pending = false end
         pendingReward = nil
         if panel then panel:Hide() end
         return true
     end
-    boardSessionActive = false
-    boardReleaseArmed = false
-    boardNPCGUID = nil
-    excludedFrame = nil
-    excludedRoot = nil
     return false
 end
 
@@ -767,7 +770,14 @@ panel:SetScript("OnUpdate",function(_,elapsed) if clickLock>0 then clickLock=mat
 local gossipIcons={vendor="Interface\\GossipFrame\\VendorGossipIcon",trainer="Interface\\GossipFrame\\TrainerGossipIcon",taxi="Interface\\GossipFrame\\TaxiGossipIcon",banker="Interface\\GossipFrame\\BankerGossipIcon",battlemaster="Interface\\GossipFrame\\BattleMasterGossipIcon",healer="Interface\\GossipFrame\\HealerGossipIcon",binder="Interface\\GossipFrame\\BinderGossipIcon",auctioneer="Interface\\GossipFrame\\AuctioneerGossipIcon",tabard="Interface\\GossipFrame\\TabardGossipIcon",gossip="Interface\\GossipFrame\\GossipGossipIcon"}
 
 HeroCallBoardVisualOpen = function()
-    if not CursorQuestChoicesDB or not CursorQuestChoicesDB.disableOnCallBoard then return false end
+    -- This visual exclusion is board-only. Normal named NPCs always retain the
+    -- cursor panel regardless of the Call Board toggle.
+    local npcExists = UnitExists and UnitExists("npc")
+    local npcName = UnitName and UnitName("npc") or nil
+    if npcExists and type(npcName) == "string" and npcName ~= "" and not IsExcludedTitle(npcName) then
+        return false
+    end
+    if CursorQuestChoicesDB and CursorQuestChoicesDB.callBoardEnabled then return false end
     -- Visual-only exclusion. This must not alter normal quest automation state.
     -- The board can expose a gossip option such as "Return" even though it is
     -- not a normal NPC interaction, so suppress only Cursor Quest's popup.
@@ -1110,7 +1120,7 @@ local function BuildOptions()
     local enabled=Check("CQCEnabledCB","Enable cursor panels",-72,"enabled")
     local auto=Check("CQCAutoCB","Enable Auto Quest Master",-102,"autoQuestEnabled")
     local trivial=Check("CQCSkipTrivialCB","Skip trivial (grey) quests",-132,"skipTrivial")
-    local boardToggle=Check("CQCCallBoardCB","Disable Cursor Quest on Hero's Call Board",-162,"disableOnCallBoard")
+    local callBoard=Check("CQCCallBoardEnabledCB","Enable Cursor Quest only on Hero's Call Board",-162,"callBoardEnabled")
     local moveMerchant=Check("CQCMoveMerchantCB","Move the real merchant window beside the cursor",-192,"moveMerchantFrame")
     local compactMerchant=Check("CQCCompactMerchantCB","Also show the compact cursor store list",-222,"showMerchantInventory")
     local modeLabel=p:CreateFontString(nil,"ARTWORK","GameFontNormal"); modeLabel:SetPoint("TOPLEFT",20,-268); modeLabel:SetText("Reward mode")
@@ -1123,7 +1133,7 @@ local function BuildOptions()
     pick:SetScript("OnClick",function(self) CursorQuestChoicesDB.statsBehavior=self:GetChecked() and "pick" or "auto" end)
     local hint=p:CreateFontString(nil,"ARTWORK","GameFontHighlightSmall"); hint:SetPoint("TOPLEFT",20,-460); hint:SetText("Blocked words: commission  •  Use /cqc block add <word> to add more.")
     p.refresh=function()
-                enabled:SetChecked(CursorQuestChoicesDB.enabled); auto:SetChecked(CursorQuestChoicesDB.autoQuestEnabled); trivial:SetChecked(CursorQuestChoicesDB.skipTrivial); boardToggle:SetChecked(CursorQuestChoicesDB.disableOnCallBoard); moveMerchant:SetChecked(CursorQuestChoicesDB.moveMerchantFrame); compactMerchant:SetChecked(CursorQuestChoicesDB.showMerchantInventory); pick:SetChecked(CursorQuestChoicesDB.statsBehavior=="pick")
+                enabled:SetChecked(CursorQuestChoicesDB.enabled); auto:SetChecked(CursorQuestChoicesDB.autoQuestEnabled); trivial:SetChecked(CursorQuestChoicesDB.skipTrivial); callBoard:SetChecked(CursorQuestChoicesDB.callBoardEnabled); moveMerchant:SetChecked(CursorQuestChoicesDB.moveMerchantFrame); compactMerchant:SetChecked(CursorQuestChoicesDB.showMerchantInventory); pick:SetChecked(CursorQuestChoicesDB.statsBehavior=="pick")
         for _,e in ipairs(MODES) do if e[1]==CursorQuestChoicesDB.rewardMode then UIDropDownMenu_SetSelectedValue(dd,e[1]); UIDropDownMenu_SetText(dd,e[2]) end end
         for _,e in ipairs(FOCUS) do if e[1]==CursorQuestChoicesDB.statFocus then UIDropDownMenu_SetSelectedValue(fd,e[1]); UIDropDownMenu_SetText(fd,e[2]) end end
     end
@@ -1148,7 +1158,7 @@ SlashCmdList.CURSORQUESTCHOICES=function(msg)
     elseif cmd=="off" then CursorQuestChoicesDB.enabled=false; panel:Hide(); RestoreGossip(); Print("disabled")
     elseif cmd=="options" or cmd=="opts" then OpenOptions()
     elseif cmd=="auto" and (val=="on" or val=="off") then CursorQuestChoicesDB.autoQuestEnabled=val=="on"; Print("Auto Quest "..val)
-    elseif cmd=="callboard" and (val=="on" or val=="off") then CursorQuestChoicesDB.disableOnCallBoard=val=="on"; if not CursorQuestChoicesDB.disableOnCallBoard then EndBoardSession("callboard toggle off") end; Print("Hero's Call Board exclusion "..(CursorQuestChoicesDB.disableOnCallBoard and "on" or "off"))
+    elseif cmd=="callboard" and (val=="on" or val=="off") then CursorQuestChoicesDB.callBoardEnabled=(val=="on"); interactionIsCallBoard=nil; EndBoardSession("callboard toggle changed"); Print("Hero's Call Board-only support "..val)
     elseif cmd=="mode" and (val=="manual" or val=="value" or val=="stats") then CursorQuestChoicesDB.rewardMode=val; Print("reward mode: "..val)
     elseif cmd=="stats" and (val=="auto" or val=="pick") then CursorQuestChoicesDB.statsBehavior=val; Print("stats behavior: "..val)
     elseif cmd=="focus" then val=val:upper(); if val=="AUTO" or KEY_TO_TOKEN[val] then CursorQuestChoicesDB.statFocus=val; Print("stats focus: "..val) else Print("unknown focus") end
@@ -1256,13 +1266,25 @@ CQC:SetScript("OnEvent",function(self,event,arg1)
         NeutralizeLegacyAutoQuest("PLAYER_LOGIN verification")
         return
     elseif event=="GOSSIP_SHOW" then
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then panel:Hide(); return end
-        if autoFlow.lock<=0 and not Paused() and SelectNextGossipAutoAction() then panel:Hide(); return end
+        CaptureInteractionSource(true)
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then panel:Hide(); return end
+        if not Paused() then
+            if autoFlow.lock<=0 then
+                if SelectNextGossipAutoAction() then panel:Hide(); return end
+                -- CoA may fire GOSSIP_SHOW before quest records are fully populated.
+                ScheduleAutoResume("gossip data settling",0.10)
+            else
+                -- Never drop a new NPC list merely because the previous action lock
+                -- is still expiring. Retry as soon as the lock clears.
+                ScheduleAutoResume("gossip arrived during action lock",math.max(0.06,autoFlow.lock+0.02))
+            end
+        end
         -- Visual gossip data is valid even when this private server does not
         -- preserve the npc unit token. Board interactions were excluded above.
         local needsRefresh=BuildGossipChoices(false)
         if needsRefresh then ScheduleGossipRefresh(0.06) else CancelGossipRefresh() end
     elseif event=="MERCHANT_SHOW" then
+        interactionIsCallBoard = false
         CancelGossipRefresh()
         InstallMerchantFrameHook()
         BeginMerchantReposition()
@@ -1278,12 +1300,20 @@ CQC:SetScript("OnEvent",function(self,event,arg1)
         merchantRepositionUntil = 0
         if panelMode=="merchant" then panel:Hide() end
     elseif event=="QUEST_GREETING" then
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then panel:Hide(); return end
-        if autoFlow.lock<=0 and not Paused() and SelectNextGreetingAutoAction() then panel:Hide(); return end
+        CaptureInteractionSource(true)
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then panel:Hide(); return end
+        if not Paused() then
+            if autoFlow.lock<=0 then
+                if SelectNextGreetingAutoAction() then panel:Hide(); return end
+                ScheduleAutoResume("greeting data settling",0.10)
+            else
+                ScheduleAutoResume("greeting arrived during action lock",math.max(0.06,autoFlow.lock+0.02))
+            end
+        end
         BuildGreetingChoices()
     elseif event=="QUEST_DETAIL" then
         panel:Hide()
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then
             SuppressBlockedQuestUI("Hero's Call Board QUEST_DETAIL")
             return
         end
@@ -1307,26 +1337,28 @@ CQC:SetScript("OnEvent",function(self,event,arg1)
         end
     elseif event=="QUEST_PROGRESS" then
         panel:Hide()
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then return end
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then return end
         if not Paused() then if IsQuestCompletable() then CompleteQuest(); LockAutoAction() elseif QuestFrame and QuestFrame:IsShown() then CloseQuest(); ScheduleAutoResume("incomplete quest closed",0.15) end end
     elseif event=="QUEST_COMPLETE" then
         panel:Hide()
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then pendingReward=nil; return end
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then pendingReward=nil; return end
         local n=GetNumQuestChoices() or 0
         if Paused() then if CursorQuestChoicesDB.enabled and n>1 then BuildRewardPanel(false) end; return end
         if n<=1 then GetQuestReward(n==0 and 0 or 1)
         elseif CursorQuestChoicesDB.rewardMode=="manual" or (CursorQuestChoicesDB.rewardMode=="stats" and CursorQuestChoicesDB.statsBehavior=="pick") then BuildRewardPanel(CursorQuestChoicesDB.rewardMode~="manual")
         elseif not ChooseBestReward() then pendingReward={elapsed=0,retry=0} end
     elseif event=="QUEST_ACCEPT_CONFIRM" then
-        if BoardAutomationBlocked and BoardAutomationBlocked(true) then return end
+        if BoardAutomationBlocked and BoardAutomationBlocked(false) then return end
         if not Paused() then ConfirmAcceptQuest(); StaticPopup_Hide("QUEST_ACCEPT_CONFIRM"); LockAutoAction(); ScheduleAutoResume("shared quest confirmed",0.15) end
     elseif event=="QUEST_FINISHED" then
         panel:Hide(); pendingReward=nil
-        if not (BoardAutomationBlocked and BoardAutomationBlocked(true)) then ScheduleAutoResume("quest finished",0.12) end
+        if not (BoardAutomationBlocked and BoardAutomationBlocked(false)) then ScheduleAutoResume("quest finished",0.12) end
     elseif event=="GOSSIP_CLOSED" or event=="PLAYER_REGEN_DISABLED" then
+        if event=="GOSSIP_CLOSED" then interactionIsCallBoard=nil end
         if not (event=="GOSSIP_CLOSED" and MerchantFrame and MerchantFrame:IsShown() and panelMode=="merchant") then panel:Hide() end
         pendingReward=nil; if event=="PLAYER_REGEN_DISABLED" then autoFlow.pending=false end
     elseif event=="PLAYER_TARGET_CHANGED" and not UnitExists("npc") then
+        interactionIsCallBoard=nil
         if not (MerchantFrame and MerchantFrame:IsShown() and panelMode=="merchant") then panel:Hide() end
     end
 end)

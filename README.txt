@@ -20,3 +20,13 @@ Do not install the old standalone AutoQuestMaster335 addon beside it.
 v2.3.7
 - Fixed some custom NPC menus showing raw icon paths or incomplete interaction names on the first click.
 - The cursor panel now refreshes itself automatically as the server finishes populating gossip data.
+
+
+Hero's Call Board toggle:
+/cqc callboard off  -> addon stays inactive on the board (default)
+/cqc callboard on   -> addon is allowed to work on the board
+
+Call Board toggle:
+/cqc callboard off - keep Cursor Quest inactive only on Hero's Call Board.
+/cqc callboard on  - allow Cursor Quest to operate on Hero's Call Board.
+This setting does not affect merchants, trainers, or normal NPC quests.

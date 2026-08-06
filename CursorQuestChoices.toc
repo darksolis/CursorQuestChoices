@@ -2,7 +2,7 @@
 ## Title: Cursor Quest Choices + Auto Quest
 ## Notes: Cursor-based NPC choices, Auto Quest Master, and cursor reward selection. Hold Shift to pause automation.
 ## Author: Darksolis
-## Version: 2.3.7
+## Version: 2.4.2
 ## SavedVariables: CursorQuestChoicesDB, AQMDB
 
 CursorQuestChoices.lua
