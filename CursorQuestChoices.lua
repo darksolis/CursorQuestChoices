@@ -3,7 +3,7 @@
 -- By Darksolis
 
 local ADDON_NAME = ...
-local VERSION = "2.3.7"
+local VERSION = "2.3.8"
 local CQC = CreateFrame("Frame", "CursorQuestChoicesController")
 local boardSessionActive = false
 local boardLastSeen = 0
@@ -24,6 +24,7 @@ local defaults = {
     moveMerchantFrame = true,
     showMerchantInventory = false,
     hideBlizzardMerchant = false,
+    disableOnCallBoard = true,
 
     autoQuestEnabled = true,
     skipTrivial = true,
@@ -486,6 +487,14 @@ end
 -- Cached root/frame checks handle tab rebuilds; forced scans catch late-loaded
 -- board frames before any selection API is allowed to run.
 BoardAutomationBlocked = function(forceScan)
+    if not CursorQuestChoicesDB or not CursorQuestChoicesDB.disableOnCallBoard then
+        boardSessionActive = false
+        boardReleaseArmed = false
+        boardNPCGUID = nil
+        excludedFrame = nil
+        excludedRoot = nil
+        return false
+    end
     -- Never retain a board session after the board is no longer truly visible.
     -- This is intentionally stateless: each quest action checks the live UI.
     local visible = VisibleBoardDetected(forceScan and true or false)
@@ -758,6 +767,7 @@ panel:SetScript("OnUpdate",function(_,elapsed) if clickLock>0 then clickLock=mat
 local gossipIcons={vendor="Interface\\GossipFrame\\VendorGossipIcon",trainer="Interface\\GossipFrame\\TrainerGossipIcon",taxi="Interface\\GossipFrame\\TaxiGossipIcon",banker="Interface\\GossipFrame\\BankerGossipIcon",battlemaster="Interface\\GossipFrame\\BattleMasterGossipIcon",healer="Interface\\GossipFrame\\HealerGossipIcon",binder="Interface\\GossipFrame\\BinderGossipIcon",auctioneer="Interface\\GossipFrame\\AuctioneerGossipIcon",tabard="Interface\\GossipFrame\\TabardGossipIcon",gossip="Interface\\GossipFrame\\GossipGossipIcon"}
 
 HeroCallBoardVisualOpen = function()
+    if not CursorQuestChoicesDB or not CursorQuestChoicesDB.disableOnCallBoard then return false end
     -- Visual-only exclusion. This must not alter normal quest automation state.
     -- The board can expose a gossip option such as "Return" even though it is
     -- not a normal NPC interaction, so suppress only Cursor Quest's popup.
@@ -1100,19 +1110,20 @@ local function BuildOptions()
     local enabled=Check("CQCEnabledCB","Enable cursor panels",-72,"enabled")
     local auto=Check("CQCAutoCB","Enable Auto Quest Master",-102,"autoQuestEnabled")
     local trivial=Check("CQCSkipTrivialCB","Skip trivial (grey) quests",-132,"skipTrivial")
-    local moveMerchant=Check("CQCMoveMerchantCB","Move the real merchant window beside the cursor",-162,"moveMerchantFrame")
-    local compactMerchant=Check("CQCCompactMerchantCB","Also show the compact cursor store list",-192,"showMerchantInventory")
-    local modeLabel=p:CreateFontString(nil,"ARTWORK","GameFontNormal"); modeLabel:SetPoint("TOPLEFT",20,-238); modeLabel:SetText("Reward mode")
-    local dd=CreateFrame("Frame","CQCRewardModeDrop",p,"UIDropDownMenuTemplate"); dd:SetPoint("TOPLEFT",4,-253)
+    local boardToggle=Check("CQCCallBoardCB","Disable Cursor Quest on Hero's Call Board",-162,"disableOnCallBoard")
+    local moveMerchant=Check("CQCMoveMerchantCB","Move the real merchant window beside the cursor",-192,"moveMerchantFrame")
+    local compactMerchant=Check("CQCCompactMerchantCB","Also show the compact cursor store list",-222,"showMerchantInventory")
+    local modeLabel=p:CreateFontString(nil,"ARTWORK","GameFontNormal"); modeLabel:SetPoint("TOPLEFT",20,-268); modeLabel:SetText("Reward mode")
+    local dd=CreateFrame("Frame","CQCRewardModeDrop",p,"UIDropDownMenuTemplate"); dd:SetPoint("TOPLEFT",4,-283)
     UIDropDownMenu_Initialize(dd,function(_,level) for _,e in ipairs(MODES) do local info=UIDropDownMenu_CreateInfo(); info.text=e[2]; info.value=e[1]; info.checked=CursorQuestChoicesDB.rewardMode==e[1]; info.func=function() CursorQuestChoicesDB.rewardMode=e[1]; UIDropDownMenu_SetSelectedValue(dd,e[1]); UIDropDownMenu_SetText(dd,e[2]) end; UIDropDownMenu_AddButton(info,level) end end)
-    local focusLabel=p:CreateFontString(nil,"ARTWORK","GameFontNormal"); focusLabel:SetPoint("TOPLEFT",20,-308); focusLabel:SetText("Stats focus")
-    local fd=CreateFrame("Frame","CQCStatsFocusDrop",p,"UIDropDownMenuTemplate"); fd:SetPoint("TOPLEFT",4,-323)
+    local focusLabel=p:CreateFontString(nil,"ARTWORK","GameFontNormal"); focusLabel:SetPoint("TOPLEFT",20,-338); focusLabel:SetText("Stats focus")
+    local fd=CreateFrame("Frame","CQCStatsFocusDrop",p,"UIDropDownMenuTemplate"); fd:SetPoint("TOPLEFT",4,-353)
     UIDropDownMenu_Initialize(fd,function(_,level) for _,e in ipairs(FOCUS) do local info=UIDropDownMenu_CreateInfo(); info.text=e[2]; info.value=e[1]; info.checked=CursorQuestChoicesDB.statFocus==e[1]; info.func=function() CursorQuestChoicesDB.statFocus=e[1]; UIDropDownMenu_SetSelectedValue(fd,e[1]); UIDropDownMenu_SetText(fd,e[2]) end; UIDropDownMenu_AddButton(info,level) end end)
-    local pick=Check("CQCStatsPickCB","Stats mode: show scores and let me pick",-385,"statsPickProxy")
+    local pick=Check("CQCStatsPickCB","Stats mode: show scores and let me pick",-415,"statsPickProxy")
     pick:SetScript("OnClick",function(self) CursorQuestChoicesDB.statsBehavior=self:GetChecked() and "pick" or "auto" end)
-    local hint=p:CreateFontString(nil,"ARTWORK","GameFontHighlightSmall"); hint:SetPoint("TOPLEFT",20,-430); hint:SetText("Blocked words: commission  •  Use /cqc block add <word> to add more.")
+    local hint=p:CreateFontString(nil,"ARTWORK","GameFontHighlightSmall"); hint:SetPoint("TOPLEFT",20,-460); hint:SetText("Blocked words: commission  •  Use /cqc block add <word> to add more.")
     p.refresh=function()
-                enabled:SetChecked(CursorQuestChoicesDB.enabled); auto:SetChecked(CursorQuestChoicesDB.autoQuestEnabled); trivial:SetChecked(CursorQuestChoicesDB.skipTrivial); moveMerchant:SetChecked(CursorQuestChoicesDB.moveMerchantFrame); compactMerchant:SetChecked(CursorQuestChoicesDB.showMerchantInventory); pick:SetChecked(CursorQuestChoicesDB.statsBehavior=="pick")
+                enabled:SetChecked(CursorQuestChoicesDB.enabled); auto:SetChecked(CursorQuestChoicesDB.autoQuestEnabled); trivial:SetChecked(CursorQuestChoicesDB.skipTrivial); boardToggle:SetChecked(CursorQuestChoicesDB.disableOnCallBoard); moveMerchant:SetChecked(CursorQuestChoicesDB.moveMerchantFrame); compactMerchant:SetChecked(CursorQuestChoicesDB.showMerchantInventory); pick:SetChecked(CursorQuestChoicesDB.statsBehavior=="pick")
         for _,e in ipairs(MODES) do if e[1]==CursorQuestChoicesDB.rewardMode then UIDropDownMenu_SetSelectedValue(dd,e[1]); UIDropDownMenu_SetText(dd,e[2]) end end
         for _,e in ipairs(FOCUS) do if e[1]==CursorQuestChoicesDB.statFocus then UIDropDownMenu_SetSelectedValue(fd,e[1]); UIDropDownMenu_SetText(fd,e[2]) end end
     end
@@ -1127,7 +1138,7 @@ end
 
 local function Help()
     Print("/cqc on|off • /cqc options • /cqc scale 0.8-1.5 • /cqc rows 5-15 • /cqc width 320-520")
-    Print("/cqc auto on|off • /cqc mode manual|value|stats • /cqc stats auto|pick • /cqc focus <AUTO|STR|...>")
+    Print("/cqc auto on|off • /cqc callboard on|off • /cqc mode manual|value|stats • /cqc stats auto|pick • /cqc focus <AUTO|STR|...>")
     Print("/cqc hideblizzard • /cqc block add|remove <word> • /cqc reset")
 end
 SLASH_CURSORQUESTCHOICES1="/cqc"; SLASH_CURSORQUESTCHOICES2="/aq"; SLASH_CURSORQUESTCHOICES3="/aqm"
@@ -1137,6 +1148,7 @@ SlashCmdList.CURSORQUESTCHOICES=function(msg)
     elseif cmd=="off" then CursorQuestChoicesDB.enabled=false; panel:Hide(); RestoreGossip(); Print("disabled")
     elseif cmd=="options" or cmd=="opts" then OpenOptions()
     elseif cmd=="auto" and (val=="on" or val=="off") then CursorQuestChoicesDB.autoQuestEnabled=val=="on"; Print("Auto Quest "..val)
+    elseif cmd=="callboard" and (val=="on" or val=="off") then CursorQuestChoicesDB.disableOnCallBoard=val=="on"; if not CursorQuestChoicesDB.disableOnCallBoard then EndBoardSession("callboard toggle off") end; Print("Hero's Call Board exclusion "..(CursorQuestChoicesDB.disableOnCallBoard and "on" or "off"))
     elseif cmd=="mode" and (val=="manual" or val=="value" or val=="stats") then CursorQuestChoicesDB.rewardMode=val; Print("reward mode: "..val)
     elseif cmd=="stats" and (val=="auto" or val=="pick") then CursorQuestChoicesDB.statsBehavior=val; Print("stats behavior: "..val)
     elseif cmd=="focus" then val=val:upper(); if val=="AUTO" or KEY_TO_TOKEN[val] then CursorQuestChoicesDB.statFocus=val; Print("stats focus: "..val) else Print("unknown focus") end
