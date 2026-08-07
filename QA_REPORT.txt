@@ -53,3 +53,8 @@ v2.4.2 intermittent auto-accept QA:
 - Fixed GOSSIP_SHOW/QUEST_GREETING events arriving during action lock being dropped.
 - Added bounded delayed retry while private-server quest records settle.
 - Global Call Board API guard now blocks only an interaction explicitly classified as the board; it no longer live-rescans stale UI frames during normal quest calls.
+
+DOCUMENTATION PACKAGE REFRESH
+- README updated for v2.4.2.
+- Current commands, reward modes, merchant behavior, Hero's Call Board toggle, install procedure, and recent fixes documented.
+- Addon code unchanged in this documentation refresh.
