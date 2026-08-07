@@ -1,4 +1,4 @@
-Cursor Quest Choices v2.3.7
+Cursor Quest Choices v2.4.2
 By Darksolis
 
 Places NPC quest and gossip choices beside the cursor, automates eligible quest acceptance and turn-ins, provides cursor-side reward choices, and positions the native merchant window beside the cursor.
